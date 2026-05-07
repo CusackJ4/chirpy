@@ -19,9 +19,9 @@ func main() {
 		apiCfg.middlewareMetricsInc(http.StripPrefix("/app",
 			http.FileServer(http.Dir(filePathRoot)))))
 
-	mux.HandleFunc("/metrics", apiCfg.metricsHandler)
-	mux.HandleFunc("/reset", apiCfg.hitresetHandler)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, req *http.Request) {
+	mux.HandleFunc("GET /api/metrics", apiCfg.metricsHandler)
+	mux.HandleFunc("POST /api/reset", apiCfg.hitresetHandler)
+	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(http.StatusText(http.StatusOK)))
