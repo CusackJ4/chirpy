@@ -1,18 +1,48 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"html/template"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"sync/atomic"
 	"unicode/utf8"
+
+	"github.com/CusackJ4/chirpy.git/internal/database"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
+
+type apiConfig struct {
+	fileserverHits atomic.Int32
+	db             *database.Queries // from db.go
+}
 
 func main() {
 	const filePathRoot = "."
 	const port = "8080"
-	var apiCfg apiConfig
+
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+	dbConn, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatal("Unable to connect to DB")
+	}
+	dbQueries := database.New(dbConn) // from db.go, type is *database.Queries
+
+	var apiCfg apiConfig // see alternate method
+	apiCfg.db = dbQueries
+
+	/*
+		Alternate method to initializing 'apiCfg' struct: isntead of initalizing an empty apiCFG, use a struct literal
+		apiCfg := apiConfig{
+				fileserverHits: atomic.Int32{},
+				db: dbQueries
+			}
+	*/
 
 	mux := http.NewServeMux()
 	// mux.Handle("/", http.FileServer(http.Dir(filePathRoot)))
@@ -40,10 +70,6 @@ func main() {
 	log.Printf("Serving on port: %s\n", port)
 	log.Fatal(srv.ListenAndServe())
 
-}
-
-type apiConfig struct {
-	fileserverHits atomic.Int32
 }
 
 // html template for hit metrics
@@ -86,7 +112,7 @@ func (cfg *apiConfig) hitresetHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("Counter reset to 0\n"))
 }
 
-// method to accept a POST request and send a response.
+// method to accept a POST request and send a response. aka validate chirp
 func (cfg *apiConfig) chirplengthHandler(w http.ResponseWriter, r *http.Request) {
 
 	type parameters struct {
@@ -108,14 +134,20 @@ func (cfg *apiConfig) chirplengthHandler(w http.ResponseWriter, r *http.Request)
 	case bodyLength > 140:
 		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
 	case bodyLength <= 140:
-		respondWithJson(w, http.StatusOK, true)
+		// badword checker / string cleaner
+		badwords := []string{"kerfuffle", "sharbert", "fornax"}
+		params.Body = stringCleaner(params.Body, badwords)
+		//end check
+
+		respondWithJson(w, http.StatusOK, params.Body)
 	}
 }
 
 type APIResponse[T any] struct {
-	Data  T      `json:"data,omitempty"`
-	Error string `json:"error,omitempty"`
-	Valid bool   `json:"valid,omitempty"`
+	Data         T      `json:"data,omitempty"`
+	Error        string `json:"error,omitempty"`
+	Valid        bool   `json:"valid,omitempty"`
+	Cleaned_body T      `json:"cleaned_body,omitempty"`
 }
 
 func writeJson(w http.ResponseWriter, code int, v any) {
@@ -133,6 +165,29 @@ func respondWithError(w http.ResponseWriter, code int, msg string) {
 }
 
 // data T is here because it was asked for in the lesson.
-func respondWithJson[T any](w http.ResponseWriter, code int, data T) {
+/* func respondWithJson[T any](w http.ResponseWriter, code int, data T) {
 	writeJson(w, code, APIResponse[T]{Valid: true})
+} */
+func respondWithJson[T any](w http.ResponseWriter, code int, data T) {
+	writeJson(w, code, APIResponse[T]{Valid: true, Cleaned_body: data})
+}
+
+func stringCleaner(body string, badwords []string) string {
+
+	targetMap := make(map[string]struct{}) // empty map for badwords
+	for _, target := range badwords {
+		// create map of badwords, w/empty structs as values
+		targetMap[target] = struct{}{}
+	}
+	splitBody := strings.Split(body, " ")
+
+	// use i to modify index directly instead of copy ('word' is a copy)
+	for i, word := range splitBody {
+		lowWord := strings.ToLower(word)
+		if _, found := targetMap[lowWord]; found {
+			splitBody[i] = "****"
+		}
+	}
+
+	return strings.Join(splitBody, " ")
 }
